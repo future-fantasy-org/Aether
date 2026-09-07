@@ -66,6 +66,40 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)
 
+  packages/agent-runtime-host:
+    dependencies:
+      '@aether/agent-contracts':
+        specifier: workspace:*
+        version: link:../agent-contracts
+      '@aether/agent-domain':
+        specifier: workspace:*
+        version: link:../agent-domain
+      '@aether/artifact-provider':
+        specifier: workspace:*
+        version: link:../artifact-provider
+      '@aether/runtime-codex':
+        specifier: workspace:*
+        version: link:../runtime-codex
+      '@aether/runtime-deepseek':
+        specifier: workspace:*
+        version: link:../runtime-deepseek
+      '@aether/terminal-provider':
+        specifier: workspace:*
+        version: link:../terminal-provider
+      '@aether/workspace-provider':
+        specifier: workspace:*
+        version: link:../workspace-provider
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)
+
   packages/artifact-provider:
     dependencies:
       '@aether/agent-domain':
