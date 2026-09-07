@@ -82,6 +82,31 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.1)
 
+  packages/runtime-deepseek:
+    dependencies:
+      '@aether/agent-contracts':
+        specifier: workspace:*
+        version: link:../agent-contracts
+      '@aether/agent-domain':
+        specifier: workspace:*
+        version: link:../agent-domain
+      '@aether/agent-projection':
+        specifier: workspace:*
+        version: link:../agent-projection
+      '@aether/workspace-provider':
+        specifier: workspace:*
+        version: link:../workspace-provider
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.1)
+
   packages/terminal-provider:
     dependencies:
       '@aether/agent-domain':

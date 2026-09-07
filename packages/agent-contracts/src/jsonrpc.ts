@@ -99,17 +99,18 @@ export class JsonRpcPeer {
 
 /** Adapt a Node child process (or process itself) to PeerStreams. */
 export function childProcessStreams(cp: {
-  stdin: { write(s: string): boolean };
-  stdout: { on(ev: "data", cb: (b: Buffer) => void): unknown };
+  stdin: { write(...data: unknown[]): unknown } | null;
+  stdout: { on(ev: "data", cb: (b: Buffer) => void): unknown } | null;
   on(ev: "close", cb: () => void): unknown;
 }): PeerStreams {
   let buffer = "";
+  const stdout = cp.stdout;
   return {
     write: (s) => {
-      cp.stdin.write(s);
+      cp.stdin?.write(s);
     },
     onData: (cb) => {
-      cp.stdout.on("data", (b: Buffer) => {
+      stdout?.on("data", (b: Buffer) => {
         buffer += b.toString("utf8");
         let i: number;
         while ((i = buffer.indexOf("\n")) >= 0) {
@@ -121,6 +122,40 @@ export function childProcessStreams(cp: {
     },
     onClose: (cb) => {
       cp.on("close", cb);
+    },
+  };
+}
+
+/**
+ * Adapt the *current* process stdio to PeerStreams (for a server speaking
+ * JSON-RPC over its own stdin/stdout, e.g. the harness and the host).
+ */
+export function selfProcessStreams(proc: {
+  stdin: NodeJS.ReadableStream & { read?: () => unknown };
+  stdout: NodeJS.WritableStream;
+  once?(ev: string, cb: () => void): unknown;
+  on?(ev: string, cb: () => void): unknown;
+}): PeerStreams {
+  let buffer = "";
+  return {
+    write: (s) => {
+      proc.stdout.write(s);
+    },
+    onData: (cb) => {
+      proc.stdin.on("data", (b: Buffer) => {
+        buffer += b.toString("utf8");
+        let i: number;
+        while ((i = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, i);
+          buffer = buffer.slice(i + 1);
+          cb(line);
+        }
+      });
+      proc.stdin.resume?.();
+    },
+    onClose: (cb) => {
+      proc.stdin.on?.("end", cb);
+      proc.stdin.on?.("close", cb);
     },
   };
 }
