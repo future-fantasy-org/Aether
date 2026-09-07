@@ -1,0 +1,38 @@
+{
+  "name": "aether-desktop",
+  "productName": "Aether",
+  "version": "0.1.0",
+  "private": true,
+  "main": ".vite/build/main.js",
+  "scripts": {
+    "dev": "electron-forge start",
+    "package": "electron-forge package",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.5.0",
+    "@electron-forge/plugin-vite": "^7.5.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^37.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "@aether/agent-contracts": "workspace:*",
+    "@aether/agent-domain": "workspace:*",
+    "@aether/agent-projection": "workspace:*",
+    "@aether/agent-runtime-client": "workspace:*",
+    "@aether/desktop-contracts": "workspace:*",
+    "@tanstack/react-query": "^5.59.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "zustand": "^5.0.0"
+  }
+}

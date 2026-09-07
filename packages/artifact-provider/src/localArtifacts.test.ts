@@ -44,6 +44,9 @@ describe("LocalArtifactProvider", () => {
   it("sanitizes thread ids in paths", async () => {
     const p = new LocalArtifactProvider(root);
     const saved = await p.save("../../evil", { type: "text", title: "x.txt", metadata: {}, content: "x" });
-    expect(saved.location.path).not.toContain("..");
+    expect(saved.location.kind).toBe("local");
+    if (saved.location.kind === "local") {
+      expect(saved.location.path).not.toContain("..");
+    }
   });
 });
