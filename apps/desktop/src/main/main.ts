@@ -4,6 +4,7 @@ import { createPlatformStore } from "./store.js";
 import { HostSidecar } from "./sidecar.js";
 import { registerIpc } from "./ipc.js";
 import { createMainWindow } from "./window.js";
+import { runE2E } from "./e2e.js";
 
 // Single instance lock keeps sidecar management sane.
 if (!app.requestSingleInstanceLock()) {
@@ -47,6 +48,13 @@ void (async () => {
       payload: { status: "stopped", error: err.message },
     });
   });
+
+  if (process.env.AETHER_E2E === "1") {
+    // Automated end-to-end flow through the real main-process stack.
+    const code = await runE2E(sidecar, store);
+    app.exit(code);
+    return;
+  }
 
   app.on("before-quit", () => {
     void sidecar.shutdown();

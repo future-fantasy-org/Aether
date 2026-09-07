@@ -1,51 +1,87 @@
 # Aether
 
-> **One workspace. Every agent.**  
-> **一个工作台，连接所有 Agent。**
+> One Workspace, Every Agent — a runtime-agnostic AI agent desktop workspace.
 
-Aether is a universal desktop workbench for AI agents, built by **FutureFantasy Tech**.
+Aether 是一个 **Runtime 无关的 Agent 桌面工作台**：同一个 Workspace、Thread、Timeline 与 Surface 体系，可以接入任何 Agent Runtime（Codex、DeepSeek Harness、未来的更多运行时），并通过统一的抽象（Adapter / Capabilities / RuntimeEvent）消除它们之间的差异。
 
-Instead of locking you into a single model or agent runtime, Aether provides one consistent workspace for working with different agent backends — from local runtimes such as **Codex App Server** and **DeepSeek Harness**, to future cloud and remote agents.
+完整架构设计见 [`arch.md`](./arch.md)，实现规格见 [`docs/superpowers/specs/2026-09-08-aether-mvp-design.md`](./docs/superpowers/specs/2026-09-08-aether-mvp-design.md)。
 
-Aether focuses on the experience layer: conversations, agent activity, plans, tool calls, terminal sessions, file changes, diffs, approvals, artifacts, and execution status are normalized into one unified interface.
+## 功能（MVP）
 
-Underneath, different runtimes remain independent. Aether connects to them through a runtime-agnostic adapter architecture, so new agents, protocols, local environments, and cloud execution backends can be added without redesigning the entire UI.
+- **Workspace / Thread / Timeline / Composer**：三栏工作台；Timeline 是树状工作流视图（消息/推理/计划/命令/文件变更/审批/错误），不是聊天气泡
+- **双 Runtime**：
+  - **Codex Local** —— 通过 `codex app-server`（JSON-RPC over stdio）接入本机 Codex CLI
+  - **DeepSeek Local** —— 内置参考 Harness（`packages/runtime-deepseek`，独立进程）：Agent Loop + 工具调用（read/write/edit/glob/grep/shell）+ 流式推理 + JSONL 会话持久化，真实调用 DeepSeek API
+- **统一审批**：危险命令/文件修改/权限请求统一为 ApprovalRequest → 单一审批 UI（Allow once / Always allow / Reject）
+- **Surfaces**：Files（浏览/编辑）、Diff（统一 diff 视图）、Terminal（真实 PTY）、Artifact（列表/预览/导出）、Runtime Inspector（能力矩阵/事件计数）
+- **断线恢复**：Host sidecar 崩溃自动重启；Thread 状态经 `thread/read` 快照 + 增量事件恢复
 
-Our goal is simple:
+## 架构（Sidecar）
 
-**Build the desktop workspace where every agent can work.**
+```
+Electron Renderer ──contextBridge IPC──▶ Electron Main ──spawn + stdio JSON-RPC──▶ Agent Execution Host（独立 Node 进程）
+                                                                                    ├─ CodexAdapter ──stdio──▶ codex app-server
+                                                                                    ├─ DeepSeekAdapter ──stdio──▶ deepseek-harness
+                                                                                    ├─ LocalFileProvider / LocalPtyProvider / LocalArtifactProvider
+                                                                                    └─ EventNormalizer / ApprovalRouter
+```
 
----
+事件单向流：`Runtime → Adapter(normalize) → Host → Main → Renderer → Projection → Timeline`。
 
-Aether 是由 **FutureFantasy Tech** 打造的通用 AI Agent 桌面工作台。
+## Monorepo 布局
 
-我们不希望用户被绑定在某一个模型、某一个 CLI 或某一种 Agent Runtime 上。
+| 包 | 职责 |
+|---|---|
+| `packages/agent-domain` | Workspace/Thread/Run/Item/Artifact/Capability 领域模型 |
+| `packages/agent-contracts` | RuntimeEvent、审批、AgentRuntimeAdapter 接口、Host RPC 协议、JSON-RPC peer |
+| `packages/agent-projection` | 事件 → 时间线视图模型（纯函数投影） |
+| `packages/workspace-provider` / `terminal-provider` / `artifact-provider` | 位置无关的文件/终端/制品 Provider（本地实现） |
+| `packages/runtime-codex` | Codex App Server 适配器（协议快照在 `src/protocol/`） |
+| `packages/runtime-deepseek` | DeepSeek 参考 Harness（`bin/deepseek-harness`）+ 适配器 |
+| `packages/agent-runtime-host` | Agent Execution Host（sidecar 进程） |
+| `packages/agent-runtime-client` | Renderer 侧类型化 Host 客户端 |
+| `packages/desktop-contracts` | Renderer↔Main IPC 契约 |
+| `apps/desktop` | Electron 应用（Forge + Vite + React + Tailwind + Zustand） |
 
-Aether 提供一个统一的工作空间，可以同时承载 **Codex App Server、DeepSeek Harness** 等本地 Agent Runtime，并为未来的 **Codex Cloud、DeepSeek Cloud、远程 Agent、企业私有 Agent** 提供统一接入能力。
+## 快速开始
 
-在 Aether 中，不同 Runtime 的执行细节会被统一映射为一致的用户体验，包括：
+前置：Node ≥ 24、pnpm ≥ 10、（可选）本机安装并登录 `codex` CLI。
 
-- Agent 对话与任务执行
-- Plan / Reasoning / Activity Timeline
-- Tool Call 与 MCP
-- Terminal 与远程 Shell
-- 文件浏览、编辑与 Diff
-- Approval 与权限确认
-- Browser / Computer Use
-- Artifact 与成果管理
-- Local / Cloud Agent 状态
-- 多 Agent 协作与任务切换
+```bash
+pnpm install
+pnpm build        # 构建所有包（首次必跑）
+pnpm dev          # 启动 Aether 桌面应用
+```
 
-Aether 本身不重新实现 Agent Runtime。
+使用：
 
-它专注于构建 Agent 的 **展示层、交互层和工作空间层**，通过 Runtime Adapter、Capability Negotiation 和统一事件模型连接不同 Agent Backend。
+1. 左栏 **+** 添加一个本地目录作为 Workspace
+2. **Threads → +** 选择 Runtime（Codex / DeepSeek）新建会话
+3. DeepSeek 需要先在 **Settings** 填入 API Key（仅保存在本地，经内存注入 Host，不落 runtime 磁盘）
+4. 发送消息；Timeline 实时呈现推理/工具/命令/文件变更；审批卡片内 Allow/Reject
+5. 底部启动 Files / Terminal / Artifacts / Inspector Surface；文件变更条目点击打开 Diff
 
-这意味着未来无论 Agent 运行在：
+## 测试与验证
 
-**你的电脑、Docker、远程服务器、企业私有云，还是模型厂商的 Cloud Agent 中，**
+```bash
+pnpm test         # 全部单元/集成测试（61 个）
+pnpm typecheck    # 全仓库类型检查
 
-都可以在 Aether 中获得一致的工作体验。
+# 冒烟（真实进程链路）
+node packages/agent-runtime-host/scripts/smoke-deepseek.mjs   # host→adapter→harness→fake API 完整回合一轮（含审批）
+node packages/agent-runtime-host/scripts/smoke-codex.mjs      # 真实 codex app-server 协议验证
+node apps/desktop/e2e/run-e2e.mjs                             # Electron 主进程级 E2E（真实全栈，fake API）
+```
 
-**Aether 的目标不是成为另一个 Agent。**
+> 说明：Codex 冒烟在账户配额耗尽时会以 "quota-limited" 通过（协议链路已验证，消息流待配额恢复）。
 
-**而是成为所有 Agent 工作的地方。**
+## 环境变量（可选）
+
+| 变量 | 作用 |
+|---|---|
+| `AETHER_DEEPSEEK_BASE_URL` | 覆盖 DeepSeek API 地址（自托管/测试） |
+| `AETHER_DEEPSEEK_SESSIONS_DIR` | 覆盖 harness 会话 JSONL 目录（默认 `~/.aether/runtimes/deepseek/sessions`） |
+
+## Roadmap（见 arch.md Phase 2+）
+
+Browser Surface、MCP 管理、Sub-Agent 视图、Cloud Backend、Runtime Handoff、企业能力（SSO/RBAC）。
