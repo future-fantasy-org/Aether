@@ -44,8 +44,25 @@ export class AetherHost {
   private artifacts: LocalArtifactProvider;
 
   constructor(opts: AetherHostOptions = {}) {
-    this.opts = opts;
-    this.registry = defaultRegistry(opts);
+    // AETHER_DEEPSEEK_BASE_URL lets smoke tests point the built-in harness at
+    // a fake server and supports self-hosted DeepSeek-compatible endpoints.
+    // AETHER_DEEPSEEK_SESSIONS_DIR keeps smoke session logs out of ~/.aether.
+    const baseUrl = process.env.AETHER_DEEPSEEK_BASE_URL;
+    const sessionsDir = process.env.AETHER_DEEPSEEK_SESSIONS_DIR;
+    const envParams: Record<string, unknown> = {};
+    if (baseUrl) envParams.baseUrl = baseUrl;
+    if (sessionsDir) envParams.sessionsDir = sessionsDir;
+    this.opts =
+      Object.keys(envParams).length > 0
+        ? {
+            ...opts,
+            deepSeekInitializeParams: {
+              ...envParams,
+              ...(opts.deepSeekInitializeParams ?? {}),
+            },
+          }
+        : opts;
+    this.registry = defaultRegistry(this.opts);
     this.connections = new ConnectionManager(this.registry);
     this.normalizer = new EventNormalizer((kind, payload) => {
       if (kind === "approvalRequested") {
