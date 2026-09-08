@@ -65,7 +65,9 @@ jobs:
           if [ -f RELEASE_NOTES.md ]; then
             cp RELEASE_NOTES.md "$NOTES_FILE"
           else
-            PREV_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n 1)"
+            # `grep -v` exits 1 when it selects nothing (only tag in the repo),
+            # which would abort the script under `set -o pipefail`.
+            PREV_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n 1 || true)"
             if [ -z "$PREV_TAG" ]; then
               CHANGELOG="$(git log --pretty=format:"- %s (%h)" "${TAG}" 2>/dev/null || git log --pretty=format:"- %s (%h)")"
             else
