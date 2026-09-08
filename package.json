@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "packageManager": "pnpm@11.10.0",
   "scripts": {
-    "build": "pnpm -r --filter '!aether-desktop' run build",
-    "test": "pnpm -r --filter '!aether-desktop' run test",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
     "typecheck": "pnpm -r run typecheck",
     "dev": "pnpm --filter aether-desktop run dev"
   },
