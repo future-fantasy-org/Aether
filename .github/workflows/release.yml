@@ -34,6 +34,10 @@ jobs:
   prepare_release:
     name: Prepare GitHub release
     runs-on: ubuntu-22.04
+    # Guard against the push event that first adds this workflow file to a
+    # branch (observed to start a tags-only workflow once); only real tag
+    # pushes and manual dispatches may create releases.
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -122,6 +126,10 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=8192
       ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+      # The secrets context is NOT available in step-level `if` expressions,
+      # so materialize the gate here (job env may reference secrets) and test
+      # the flag from the step conditions.
+      HAS_MAC_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' && '1' || '0' }}
 
     steps:
       - name: Checkout
@@ -146,11 +154,9 @@ jobs:
         run: pnpm build
 
       - name: Import macOS signing certificate
-        # secrets context is available in step-level if; step env is not.
-        if: >-
-          startsWith(matrix.platform, 'macos') &&
-          secrets.APPLE_CERTIFICATE != '' &&
-          secrets.APPLE_SIGNING_IDENTITY != ''
+        # Gate via the job-env flag: step `if` cannot access the secrets
+        # context directly, but it can read env.
+        if: startsWith(matrix.platform, 'macos') && env.HAS_MAC_SIGNING == '1'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -205,7 +211,7 @@ jobs:
         env:
           # Only export the identity when the certificate was actually imported
           # above; otherwise forge would try to sign with a missing keychain.
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ env.HAS_MAC_SIGNING == '1' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_TEAM_ID || '' }}
