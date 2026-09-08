@@ -75,6 +75,36 @@ node apps/desktop/e2e/run-e2e.mjs                             # Electron 主进�
 
 > 说明：Codex 冒烟在账户配额耗尽时会以 "quota-limited" 通过（协议链路已验证，消息流待配额恢复）。
 
+## 打包（本地）
+
+```bash
+pnpm --filter aether-desktop run package   # 平台目录产物（out/Aether-darwin-arm64/Aether.app）
+pnpm --filter aether-desktop run make      # 安装器：macOS .dmg + .zip / Windows Setup.exe
+```
+
+打包链路（`apps/desktop/scripts/package-prepare.mjs`）：
+
+1. `pnpm --filter=@aether/agent-runtime-host deploy --prod --legacy .pack/aether-agent-host` —— 把 Agent Execution Host 连同全部运行时依赖物化为自包含目录
+2. 修复 `node-pty` prebuilds 的 `spawn-helper` 执行位；按需为 `macos-alias`/`fs-xattr` 跑 node-gyp（npm 隐式构建而 pnpm 不会）
+3. `forge.config.ts` 以 `extraResource` 把该目录塞进 `Contents/Resources/aether-agent-host`，打包后 sidecar 用 `ELECTRON_RUN_AS_NODE` 从 Resources 启动（与 dev 同一代码路径）
+
+## CI 与发布
+
+- **`ci.yml`**：push/PR 质量门 —— Linux 上 `pnpm build` → `pnpm test`（76 测试）→ `pnpm typecheck`
+- **`release.yml`**（lime 同款三段式，tag `v*` 触发或手动 dispatch）：
+  1. `prepare_release`（ubuntu）：校验 tag 与 `apps/desktop/package.json` 版本一致，自动生成 Notes，创建 **Draft** Release
+  2. `build` 矩阵（fail-fast 关闭）：`macos-15`（arm64 dmg+zip）/ `macos-15-intel`（x64 dmg+zip）/ `windows-2022`（x64 Squirrel Setup.exe），上传 artifact
+  3. `publish_release_assets`：`gh release upload --clobber` 附上产物并转为正式 + latest
+
+发布一个版本：
+
+```bash
+# 1. 更新 apps/desktop/package.json 的 version（与 tag 一致）
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+代码签名（可选）：配置 repo secrets 后自动启用 —— macOS 导入证书并签名+公证（`APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`KEYCHAIN_PASSWORD`、`APPLE_SIGNING_IDENTITY`、`APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID`），Windows 签名 Squirrel 安装器（`WINDOWS_SIGNING_CERTIFICATE`、`WINDOWS_SIGNING_CERTIFICATE_PASSWORD`）。未配置时照常构建未签名产物。
+
 ## 环境变量（可选）
 
 | 变量 | 作用 |

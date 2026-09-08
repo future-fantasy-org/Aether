@@ -1,0 +1,282 @@
+name: Release
+
+# Lime-style three-stage pipeline:
+#   1. prepare_release — validate tag, generate notes, create DRAFT GitHub release
+#   2. build           — matrix (mac arm64 / mac x64 / win x64), forge make, upload artifacts
+#   3. publish         — attach artifacts to the release, flip draft -> published + latest
+#
+# A draft release that never gets assets is harmless, so a failed build leaves
+# the release safely unpublished.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v0.1.0)"
+        required: true
+        default: "v0.1.0"
+      source_ref:
+        description: "Optional ref resolving to the same commit that triggered this workflow"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare_release:
+    name: Prepare GitHub release
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.source_ref || github.ref }}
+
+      - name: Ensure GitHub release exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          TARGET_REF="${{ github.sha }}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+
+          VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "v$VERSION" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match apps/desktop/package.json version $VERSION" >&2
+            exit 1
+          fi
+
+          if [ -f RELEASE_NOTES.md ]; then
+            cp RELEASE_NOTES.md "$NOTES_FILE"
+          else
+            PREV_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n 1)"
+            if [ -z "$PREV_TAG" ]; then
+              CHANGELOG="$(git log --pretty=format:"- %s (%h)" "${TAG}" 2>/dev/null || git log --pretty=format:"- %s (%h)")"
+            else
+              CHANGELOG="$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${TAG}" 2>/dev/null || git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")"
+            fi
+
+            {
+              echo "## Aether ${TAG}"
+              echo
+              echo "### Changes"
+              echo "${CHANGELOG}"
+              echo
+              echo "### Downloads"
+              echo "- macOS (Apple Silicon): \`.dmg\` / \`.zip\`"
+              echo "- macOS (Intel): \`.dmg\` / \`.zip\`"
+              echo "- Windows (x64): \`Setup.exe\`"
+            } > "$NOTES_FILE"
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TARGET_REF" \
+              --title "Aether $TAG" \
+              --notes-file "$NOTES_FILE"
+            echo "Release $TAG already exists; notes refreshed"
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_REF" \
+            --title "Aether $TAG" \
+            --draft \
+            --notes-file "$NOTES_FILE"
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: prepare_release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-15
+            host_platform: darwin
+            arch: arm64
+            name: macOS-arm64
+          - platform: macos-15-intel
+            host_platform: darwin
+            arch: x64
+            name: macOS-x64
+          - platform: windows-2022
+            host_platform: win32
+            arch: x64
+            name: Windows-x64
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_ref || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: "pnpm-lock.yaml"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.node-linker=hoisted
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Import macOS signing certificate
+        # secrets context is available in step-level if; step env is not.
+        if: >-
+          startsWith(matrix.platform, 'macos') &&
+          secrets.APPLE_CERTIFICATE != '' &&
+          secrets.APPLE_SIGNING_IDENTITY != ''
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/aether-signing.keychain-db"
+          CERTIFICATE_PATH="$RUNNER_TEMP/aether-signing.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          existing_keychains=()
+          while IFS= read -r keychain; do
+            [ -n "$keychain" ] || continue
+            existing_keychains+=("$keychain")
+          done < <(security list-keychains -d user | tr -d '"')
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing_keychains[@]}"
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Prepare Windows signing certificate
+        if: matrix.host_platform == 'win32'
+        shell: bash
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WINDOWS_SIGNING_CERTIFICATE:-}" ] && [ -z "${WINDOWS_SIGNING_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "No Windows signing secrets configured; Squirrel will produce unsigned installer assets."
+            exit 0
+          fi
+          CERTIFICATE_PATH="$RUNNER_TEMP/aether-signing.pfx"
+          echo "$WINDOWS_SIGNING_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "WINDOWS_SIGNING_CERTIFICATE_FILE=$CERTIFICATE_PATH" >> "$GITHUB_ENV"
+          echo "WINDOWS_SIGNING_CERTIFICATE_PASSWORD=$WINDOWS_SIGNING_CERTIFICATE_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build installers (electron-forge make)
+        shell: bash
+        env:
+          # Only export the identity when the certificate was actually imported
+          # above; otherwise forge would try to sign with a missing keychain.
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          set -euo pipefail
+          MAKE_LOG="$RUNNER_TEMP/forge-make-${{ matrix.host_platform }}-${{ matrix.arch }}.log"
+          run_make() {
+            set +e
+            pnpm --filter aether-desktop run make 2>&1 | tee "$MAKE_LOG"
+            make_status=${PIPESTATUS[0]}
+            set -e
+          }
+          is_transient_macos_error() {
+            [ "${{ matrix.host_platform }}" = "darwin" ] || return 1
+            grep -Eq "NSURLErrorDomain|The Internet connection appears to be offline|No network route|HTTPError\(statusCode: nil|_NSURLErrorNWPathKey=unsatisfied|Response code 502 \(Bad Gateway\)|Response code 504 \(Gateway Time-out\)|A timestamp was expected but was not found|The timestamp service is not available" "$MAKE_LOG"
+          }
+          attempt=1
+          run_make
+          while [ "$make_status" -ne 0 ] && [ "$attempt" -lt 3 ] && is_transient_macos_error; do
+            attempt=$((attempt + 1))
+            echo "Forge make hit a transient macOS notarization/signing network error; retrying attempt $attempt/3 after 60 seconds."
+            sleep 60
+            run_make
+          done
+          if [ "$make_status" -ne 0 ]; then
+            exit "$make_status"
+          fi
+          echo "Forge output files:"
+          find apps/desktop/out/make -type f | sort
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-${{ matrix.name }}
+          # Explicit globs keep maker temp files (e.g. extensionless cross-zip
+          # leftovers) out of the artifacts.
+          path: |
+            apps/desktop/out/make/**/*.dmg
+            apps/desktop/out/make/**/*.zip
+            apps/desktop/out/make/squirrel.windows/**
+          if-no-files-found: error
+          retention-days: 7
+
+  publish_release_assets:
+    name: Publish release assets
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Attach assets and publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          # Filter to installable assets only (skip Squirrel metadata deltas).
+          find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*Setup.exe" -o -name "RELEASES" -o -name "*.nupkg" \) > assets.txt
+          cat assets.txt
+          xargs -a assets.txt gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+          echo "Published release $TAG"

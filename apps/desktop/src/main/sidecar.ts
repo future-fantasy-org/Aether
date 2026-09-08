@@ -18,9 +18,16 @@ export interface HostSidecarOptions {
 /** Resolve the Agent Execution Host bin (dist build of @aether/agent-runtime-host). */
 function resolveHostBin(appPath: string): string {
   const candidates = [
+    // Dev: monorepo layout relative to the packaged app dir.
     path.resolve(appPath, "../../packages/agent-runtime-host/dist/bin/aether-agent-host.js"),
     path.resolve(appPath, "../../../packages/agent-runtime-host/dist/bin/aether-agent-host.js"),
-    path.resolve(process.resourcesPath ?? "", "aether-agent-host/aether-agent-host.js"),
+    // Packaged: extraResources copy of the `pnpm deploy` tree (scripts/package-prepare.mjs).
+    // Default deploy puts the package at the target root; legacy layouts nest it.
+    path.resolve(process.resourcesPath ?? "", "aether-agent-host/dist/bin/aether-agent-host.js"),
+    path.resolve(
+      process.resourcesPath ?? "",
+      "aether-agent-host/node_modules/@aether/agent-runtime-host/dist/bin/aether-agent-host.js",
+    ),
   ];
   for (const c of candidates) if (existsSync(c)) return c;
   throw new Error(

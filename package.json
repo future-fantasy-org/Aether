@@ -9,6 +9,7 @@
     "dev": "pnpm --filter aether-desktop run dev"
   },
   "devDependencies": {
+    "node-gyp": "^13.0.2",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }

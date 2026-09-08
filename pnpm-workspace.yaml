@@ -3,13 +3,22 @@ packages:
   - packages/*
 nodeLinker: hoisted
 storeDir: .pnpm-store
+# Deps are installed explicitly (CI) or on demand; skip the pre-run check that
+# tries to auto-reinstall (and aborts without a TTY) before every script.
+verifyDepsBeforeRun: false
 allowBuilds:
   esbuild: true
   node-pty: true
   electron-winstaller: true
   electron: true
+  '@aether/terminal-provider@file:packages/terminal-provider': true
+  fs-xattr: true
+  macos-alias: true
 onlyBuiltDependencies:
   - esbuild
   - node-pty
   - electron-winstaller
+  - '@aether/terminal-provider'
+  - fs-xattr
+  - macos-alias
 blockExoticSubdeps: false

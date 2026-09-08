@@ -1,0 +1,60 @@
+name: CI
+
+# Quality gate for every push to main and all pull requests:
+# install -> build -> test (76 unit/e2e tests) -> typecheck, on Linux.
+# Platform installers are built by release.yml only.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build & test
+    runs-on: ubuntu-22.04
+
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: "pnpm-lock.yaml"
+
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
+        with:
+          path: .cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.node-linker=hoisted
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck

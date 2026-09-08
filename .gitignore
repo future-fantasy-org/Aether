@@ -37,3 +37,4 @@ Icon?
 # ---------- Electron packaging ----------
 apps/desktop/.vite/
 apps/desktop/out/
+apps/desktop/.pack/
