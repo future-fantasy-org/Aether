@@ -288,9 +288,14 @@ jobs:
           set -euo pipefail
           TAG="${{ github.event.inputs.version || github.ref_name }}"
           # Filter to installable assets only (skip Squirrel metadata deltas).
+          # Squirrel's "Aether 0.1.0 Setup.exe" contains spaces, so upload line
+          # by line — xargs would split it into two bogus arguments (exit 123).
           find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*Setup.exe" -o -name "RELEASES" -o -name "*.nupkg" \) > assets.txt
           cat assets.txt
-          xargs -a assets.txt gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber
+          done < assets.txt
           gh release edit "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --draft=false \
