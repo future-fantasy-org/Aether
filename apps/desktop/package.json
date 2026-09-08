@@ -2,6 +2,8 @@
   "name": "aether-desktop",
   "productName": "Aether",
   "version": "0.1.0",
+  "description": "Aether — a runtime-agnostic AI agent desktop workbench (DeepSeek Harness + Codex)",
+  "author": "Aether contributors",
   "private": true,
   "main": ".vite/build/main.js",
   "scripts": {
