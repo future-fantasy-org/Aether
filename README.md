@@ -64,7 +64,7 @@ pnpm dev          # 启动 Aether 桌面应用
 ## 测试与验证
 
 ```bash
-pnpm test         # 全部单元/集成测试（61 个）
+pnpm test         # 全部单元/集成测试（76 个）
 pnpm typecheck    # 全仓库类型检查
 
 # 冒烟（真实进程链路）
