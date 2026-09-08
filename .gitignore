@@ -1,9 +1,39 @@
+# ---------- Dependencies ----------
 node_modules/
+.pnpm-store/
+.pnpm/
+
+# ---------- Build outputs ----------
 dist/
 out/
 .vite/
 *.tsbuildinfo
-.DS_Store
+
+# ---------- Test ----------
 coverage/
 
-.pnpm-store/
+# ---------- Environment & secrets ----------
+.env
+.env.*
+*.local
+
+# ---------- Logs ----------
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# ---------- Editors & IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---------- macOS ----------
+.DS_Store
+._*
+Icon?
+
+# ---------- Electron packaging ----------
+apps/desktop/.vite/
+apps/desktop/out/
