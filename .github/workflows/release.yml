@@ -239,6 +239,14 @@ jobs:
             run_make
           done
           if [ "$make_status" -ne 0 ]; then
+            # Raw logs need authentication to read; surface the tail as public
+            # error annotations so failures are diagnosable without sign-in.
+            echo "::group::forge make log tail"
+            tail -n 60 "$MAKE_LOG" || true
+            echo "::endgroup::"
+            tail -n 15 "$MAKE_LOG" | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::${line}"
+            done
             exit "$make_status"
           fi
           echo "Forge output files:"

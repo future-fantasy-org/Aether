@@ -67,7 +67,11 @@ const deploy = spawnSync(
   // --legacy: pnpm ≥10 only allows deploy from injected-dependencies workspaces
   // otherwise. We want this single command scoped, not inject-workspace-packages
   // globally, so use the legacy layout (package files at target root).
-  ["--filter=@aether/agent-runtime-host", "deploy", "--prod", "--legacy", target],
+  // --ignore-scripts: the deploy sub-install re-evaluates build-script approval
+  // (whose allowBuilds keys differ on Windows file: paths), and nothing here
+  // needs it — node-pty ships prebuilds/ that node-gyp-build loads at runtime,
+  // and the spawn-helper chmod is handled below.
+  ["--filter=@aether/agent-runtime-host", "deploy", "--prod", "--legacy", "--ignore-scripts", target],
   {
     cwd: repoRoot,
     stdio: "inherit",
