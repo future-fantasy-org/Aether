@@ -16,6 +16,7 @@ import type { RuntimeEvent } from "./events.js";
 export const HOST_METHODS = {
   ping: "host/ping",
   shutdown: "host/shutdown",
+  hostStatus: "host/status",
   listRuntimes: "host/listRuntimes",
   listBackends: "host/listBackends",
   capabilities: "host/capabilities",
@@ -200,7 +201,16 @@ export interface SetRuntimeSecretParams {
   secret: string;
 }
 
-export type HostStatusKind = "starting" | "ready" | "restarting" | "stopped";
+export type HostStatusKind = "starting" | "ready" | "restarting" | "reconnected" | "stopped";
+
+/** `host/status` result — lets Main decide quit semantics (Background Run). */
+export interface HostStatusResult {
+  activeRuns: number;
+  orphan: boolean;
+  socketPath: string | null;
+  startedAt: string;
+  pid: number;
+}
 
 // Host-side thread/workspace caches are owned by Main; the host accepts
 // metadata pushes for workspace lookups (providers need rootPath).

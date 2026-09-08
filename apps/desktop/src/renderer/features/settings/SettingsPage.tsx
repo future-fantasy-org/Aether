@@ -124,6 +124,30 @@ export default function SettingsPage() {
             <option value="askDangerous">Ask for risky commands only</option>
             <option value="never">Never ask</option>
           </select>
+
+          <label className={`${label} mt-3`}>
+            Background approval timeout (minutes, 0 = wait forever)
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            className={field}
+            value={settings.backgroundApprovalTimeoutMinutes}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                backgroundApprovalTimeoutMinutes: Math.max(
+                  0,
+                  Math.round(Number(e.target.value) || 0),
+                ),
+              })
+            }
+          />
+          <p className="mt-1 text-[11px] text-[#5a6472]">
+            While Aether is closed, a pending approval is auto-rejected after this
+            delay (applies to newly started hosts).
+          </p>
         </fieldset>
 
         <div className="flex justify-end gap-2">

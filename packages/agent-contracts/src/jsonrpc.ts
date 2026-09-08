@@ -159,3 +159,34 @@ export function selfProcessStreams(proc: {
     },
   };
 }
+
+/**
+ * Adapt a Node net.Socket (UDS / named pipe) to PeerStreams — the reconnect
+ * channel for a detached host (Background Run).
+ */
+export function socketStreams(sock: {
+  write(s: string): boolean;
+  on(ev: string, cb: (b?: Buffer) => void): unknown;
+}): PeerStreams {
+  let buffer = "";
+  return {
+    write: (s) => {
+      sock.write(s);
+    },
+    onData: (cb) => {
+      sock.on("data", (b?: Buffer) => {
+        buffer += (b ?? Buffer.alloc(0)).toString("utf8");
+        let i: number;
+        while ((i = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, i);
+          buffer = buffer.slice(i + 1);
+          cb(line);
+        }
+      });
+    },
+    onClose: (cb) => {
+      sock.on("end", cb);
+      sock.on("close", cb);
+    },
+  };
+}

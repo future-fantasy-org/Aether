@@ -23,7 +23,19 @@ export default function App() {
       runtimeClient.onRuntimeEvent(applyEvent),
       runtimeClient.onApproval(addApproval),
       runtimeClient.onApprovalResolved((p) => removeApproval(p.approvalId)),
-      runtimeClient.onHostStatus((s) => setHostStatus(s.status)),
+      runtimeClient.onHostStatus(async (s) => {
+        setHostStatus(s.status);
+        // Background Run: we just attached to a detached host that kept
+        // working while Aether was closed — restore its pending approvals.
+        if (s.status === "reconnected") {
+          try {
+            const { approvals } = await runtimeClient.listPendingApprovals();
+            for (const req of approvals) addApproval(req);
+          } catch (err) {
+            console.warn("[aether] pending approvals restore failed", err);
+          }
+        }
+      }),
     ];
     return () => {
       offs.forEach((off) => off());

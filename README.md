@@ -6,7 +6,7 @@ Aether 是一个 **Runtime 无关的 Agent 桌面工作台**：同一个 Workspa
 
 完整架构设计见 [`arch.md`](./arch.md)，实现规格见 [`docs/superpowers/specs/2026-09-08-aether-mvp-design.md`](./docs/superpowers/specs/2026-09-08-aether-mvp-design.md)。
 
-## 功能（MVP）
+## 功能（MVP + Phase 2 起）
 
 - **Workspace / Thread / Timeline / Composer**：三栏工作台；Timeline 是树状工作流视图（消息/推理/计划/命令/文件变更/审批/错误），不是聊天气泡
 - **双 Runtime**：
@@ -15,6 +15,7 @@ Aether 是一个 **Runtime 无关的 Agent 桌面工作台**：同一个 Workspa
 - **统一审批**：危险命令/文件修改/权限请求统一为 ApprovalRequest → 单一审批 UI（Allow once / Always allow / Reject）
 - **Surfaces**：Files（浏览/编辑）、Diff（统一 diff 视图）、Terminal（真实 PTY）、Artifact（列表/预览/导出）、Runtime Inspector（能力矩阵/事件计数）
 - **断线恢复**：Host sidecar 崩溃自动重启；Thread 状态经 `thread/read` 快照 + 增量事件恢复
+- **Background Run（Detached Run，Phase 2）**：有活跃 Run 时退出 Aether，Agent Execution Host 以孤儿模式继续执行并持续落盘事件；重开 Aether 自动探测存活 Host（UDS/命名管道 + 会话文件）重连，replay 恢复 Timeline、悬置审批卡片重现；孤儿模式下审批超时自动拒绝（默认 30 分钟，设置可调，0 = 永久等待），Run 全部结束后 Host 空闲自杀
 
 ## 架构（Sidecar）
 
@@ -64,12 +65,13 @@ pnpm dev          # 启动 Aether 桌面应用
 ## 测试与验证
 
 ```bash
-pnpm test         # 全部单元/集成测试（76 个）
+pnpm test         # 全部单元/集成测试（84 个）
 pnpm typecheck    # 全仓库类型检查
 
 # 冒烟（真实进程链路）
 node packages/agent-runtime-host/scripts/smoke-deepseek.mjs   # host→adapter→harness→fake API 完整回合一轮（含审批）
 node packages/agent-runtime-host/scripts/smoke-codex.mjs      # 真实 codex app-server 协议验证
+node packages/agent-runtime-host/scripts/smoke-detach.mjs     # Background Run：孤儿存活/重连/审批超时/空闲自杀
 node apps/desktop/e2e/run-e2e.mjs                             # Electron 主进程级 E2E（真实全栈，fake API）
 ```
 
@@ -90,7 +92,7 @@ pnpm --filter aether-desktop run make      # 安装器：macOS .dmg + .zip / Win
 
 ## CI 与发布
 
-- **`ci.yml`**：push/PR 质量门 —— Linux 上 `pnpm build` → `pnpm test`（76 测试）→ `pnpm typecheck`
+- **`ci.yml`**：push/PR 质量门 —— Linux 上 `pnpm build` → `pnpm test`（84 测试）→ `pnpm typecheck`
 - **`release.yml`**（lime 同款三段式，tag `v*` 触发或手动 dispatch）：
   1. `prepare_release`（ubuntu）：校验 tag 与 `apps/desktop/package.json` 版本一致，自动生成 Notes，创建 **Draft** Release
   2. `build` 矩阵（fail-fast 关闭）：`macos-15`（arm64 dmg+zip）/ `macos-15-intel`（x64 dmg+zip）/ `windows-2022`（x64 Squirrel Setup.exe），上传 artifact

@@ -149,7 +149,7 @@ describe("AetherHost", () => {
       onClose: () => {},
     });
     clientPeer.onNotification((method, params) => notifications.push({ method, params }));
-    host.start(hostStreams);
+    await host.start({ stdio: hostStreams, socketPath: null, sessionFile: null });
   });
 
   afterAll(async () => {

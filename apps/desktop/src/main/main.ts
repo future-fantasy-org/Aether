@@ -31,11 +31,15 @@ void (async () => {
     }
   };
 
+  const settings = await store.getSettings();
+
   const sidecar = new HostSidecar(
     {
       onNotification: (kind, payload) =>
         broadcast({ kind: kind as HostEventEnvelope["kind"], payload }),
-      onStatus: (status) => broadcast({ kind: "hostStatus", payload: { status } }),
+      onStatus: (status, error) => broadcast({ kind: "hostStatus", payload: { status, error } }),
+      // 0 disables the orphan-mode approval timeout (wait forever).
+      approvalTimeoutMs: Math.round(settings.backgroundApprovalTimeoutMinutes * 60_000),
     },
     app.getAppPath(),
   );
@@ -56,8 +60,21 @@ void (async () => {
     return;
   }
 
-  app.on("before-quit", () => {
-    void sidecar.shutdown();
+  // Background Run (arch.md §16): with active runs the host must outlive the
+  // app — skip shutdown and let the stdio EOF detach it into orphan mode.
+  let quitting = false;
+  app.on("before-quit", (e) => {
+    if (quitting) return;
+    quitting = true;
+    e.preventDefault();
+    void (async () => {
+      if (await sidecar.hasActiveRuns()) {
+        app.exit(0);
+        return;
+      }
+      await sidecar.shutdown();
+      app.exit(0);
+    })();
   });
   app.on("second-instance", () => {
     if (win.isMinimized()) win.restore();

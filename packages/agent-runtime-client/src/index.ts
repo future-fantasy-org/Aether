@@ -212,6 +212,13 @@ export class AetherRuntimeClient {
     }) as Promise<{ ok: boolean }>;
   }
 
+  /** Pending approvals on the host — restores cards after reconnecting to a detached host. */
+  listPendingApprovals(): Promise<{ approvals: ApprovalRequest[] }> {
+    return this.bridge.hostRequest(HOST_METHODS.listPendingApprovals) as Promise<{
+      approvals: ApprovalRequest[];
+    }>;
+  }
+
   fsList(workspaceId: string, dirPath: string): Promise<{ entries: FileEntry[] }> {
     return this.bridge.hostRequest(HOST_METHODS.fsList, {
       workspaceId,

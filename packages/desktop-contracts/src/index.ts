@@ -35,6 +35,8 @@ export interface AppSettings {
   codexCommand: string;
   codexModel: string;
   approvalMode: "askAlways" | "askDangerous" | "never";
+  /** Orphan-mode approval timeout in minutes (Background Run); 0 = wait forever. */
+  backgroundApprovalTimeoutMinutes: number;
   ui: {
     surfaceWidth: number;
     lastWorkspaceId?: string;
@@ -49,6 +51,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codexCommand: "codex",
   codexModel: "",
   approvalMode: "askDangerous",
+  backgroundApprovalTimeoutMinutes: 30,
   ui: { surfaceWidth: 420 },
 };
 

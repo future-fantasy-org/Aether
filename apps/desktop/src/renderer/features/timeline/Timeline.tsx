@@ -66,7 +66,7 @@ export default function Timeline() {
             {activeRun.status === "WAITING_APPROVAL" ? "waiting approval…" : "running…"}
           </span>
         )}
-        {hostStatus !== "ready" && (
+        {hostStatus !== "ready" && hostStatus !== "reconnected" && (
           <span className="ml-auto text-[11px] text-[#e3b341]">host: {hostStatus}</span>
         )}
       </div>

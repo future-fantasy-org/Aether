@@ -4,6 +4,7 @@ import {
   HOST_METHODS,
   JsonRpcPeer,
   selfProcessStreams,
+  socketStreams,
   type PeerStreams,
   type ApprovalRequest,
   type RuntimeEvent,
@@ -18,15 +19,41 @@ import type { RegistryOptions } from "./registry.js";
 import { defaultRegistry } from "./registry.js";
 import { ConnectionManager } from "./connectionManager.js";
 import { EventNormalizer } from "./eventNormalizer.js";
+import { RunTracker } from "./runTracker.js";
+import { HostLifecycle } from "./hostLifecycle.js";
+import {
+  SessionFile,
+  defaultAetherHome,
+  listenSocket,
+  sessionFilePath,
+  socketPathFor,
+} from "./transports.js";
+import type net from "node:net";
+import fs from "node:fs";
 
 export interface AetherHostOptions extends RegistryOptions {
   artifactsDir?: string;
+  /** Root for the reconnect socket + session file (default ~/.aether). */
+  aetherHome?: string;
+  /** Orphan-mode approval timeout in ms (env AETHER_APPROVAL_TIMEOUT_MS, default 30min). */
+  approvalTimeoutMs?: number;
+}
+
+export interface HostServeOptions {
+  /** Primary stdio transport (defaults to this process's stdin/stdout). */
+  stdio?: PeerStreams | null;
+  /** Reconnect socket path; null disables Background Run support. */
+  socketPath?: string | null;
+  /** Session file path; null disables session discovery. */
+  sessionFile?: string | null;
+  /** Orphan-mode approval timeout (env AETHER_APPROVAL_TIMEOUT_MS, default 30min). */
+  approvalTimeoutMs?: number;
 }
 
 /**
  * The Agent Execution Host (arch.md §7): the seam where runtime differences
- * stop. Runs as a sidecar process spawned by Electron Main and speaks the
- * Host RPC protocol (JSON-RPC 2.0 over stdio).
+ * stop. Speaks the Host RPC protocol over stdio *and* a reconnect socket, and
+ * can outlive Electron while runs are in flight (Detached Run, arch.md §16).
  */
 export class AetherHost {
   private opts: AetherHostOptions;
@@ -34,7 +61,10 @@ export class AetherHost {
   private connections: ConnectionManager;
   private normalizer: EventNormalizer;
   private attached = new Set<string>();
-  private peer: JsonRpcPeer | undefined;
+
+  /** Connected RPC peers; `primary` receives notifications. */
+  private peers = new Set<JsonRpcPeer>();
+  private primary: JsonRpcPeer | undefined;
 
   private workspaces = new Map<string, Workspace>();
   private fileProviders = new Map<string, WorkspaceFileProvider>();
@@ -42,6 +72,13 @@ export class AetherHost {
   private terminals = new Map<string, TerminalSession>();
   private terminalProvider: TerminalProvider;
   private artifacts: LocalArtifactProvider;
+
+  private runTracker = new RunTracker();
+  private lifecycle: HostLifecycle;
+  private server: net.Server | undefined;
+  private session: SessionFile | undefined;
+  private socketPath: string | null = null;
+  private startedAt = new Date().toISOString();
 
   constructor(opts: AetherHostOptions = {}) {
     // AETHER_DEEPSEEK_BASE_URL lets smoke tests point the built-in harness at
@@ -65,31 +102,114 @@ export class AetherHost {
     this.registry = defaultRegistry(this.opts);
     this.connections = new ConnectionManager(this.registry);
     this.normalizer = new EventNormalizer((kind, payload) => {
+      if (kind === "runtimeEvent") {
+        this.runTracker.onEvent(payload as RuntimeEvent);
+        this.lifecycle.onActiveRunsChanged();
+      }
       if (kind === "approvalRequested") {
         const req = payload as ApprovalRequest;
         this.pendingApprovals.set(req.approvalId, req);
+        this.lifecycle.onApprovalRequested(req.approvalId);
       }
       if (kind === "approvalResolved") {
         const p = payload as { approvalId: string };
         this.pendingApprovals.delete(p.approvalId);
+        this.lifecycle.onApprovalResolved(p.approvalId);
       }
-      this.peer?.notify(kind, payload);
+      this.primary?.notify(kind, payload);
     });
     this.terminalProvider = new LocalPtyProvider();
     this.artifacts = new LocalArtifactProvider(this.opts.artifactsDir);
+    this.lifecycle = new HostLifecycle({
+      hasActiveRuns: () => this.runTracker.hasActiveRuns(),
+      rejectApproval: async (approvalId) => {
+        await this.respondApprovalInternal(approvalId, "rejected");
+      },
+      exit: () => {
+        void this.stop().finally(() => process.exit(0));
+      },
+      approvalTimeoutMs:
+        opts.approvalTimeoutMs ??
+        (process.env.AETHER_APPROVAL_TIMEOUT_MS
+          ? Number(process.env.AETHER_APPROVAL_TIMEOUT_MS)
+          : undefined),
+    });
   }
 
-  /** Start serving on stdio (or injected streams for tests). */
-  start(streams?: PeerStreams): void {
-    this.peer = new JsonRpcPeer(streams ?? selfProcessStreams(process));
-    this.peer.onRequest((method, params) => this.handleRequest(method, params));
+  /**
+   * Start serving. Default (bin) wiring: stdio + reconnect socket + session
+   * file. Tests inject streams and disable the socket/session.
+   */
+  async start(serve: HostServeOptions = {}): Promise<void> {
+    const home = this.opts.aetherHome ?? defaultAetherHome();
+
+    if (serve.stdio !== null) {
+      this.attachPeer(serve.stdio ?? selfProcessStreams(process));
+    }
+
+    if (serve.socketPath !== null) {
+      this.socketPath = serve.socketPath ?? socketPathFor(home);
+      this.server = await listenSocket(this.socketPath, (sock) => {
+        this.attachPeer(socketStreams(sock));
+      });
+    }
+
+    if (serve.sessionFile !== null) {
+      this.session = new SessionFile(serve.sessionFile ?? sessionFilePath(home));
+      this.session.write({
+        protocol: 1,
+        pid: process.pid,
+        socketPath: this.socketPath ?? "",
+        startedAt: this.startedAt,
+      });
+    }
+  }
+
+  private attachPeer(streams: PeerStreams): JsonRpcPeer {
+    const peer = new JsonRpcPeer(streams);
+    peer.onRequest((method, params) => this.handleRequest(method, params));
+    peer.onClose(() => this.detachPeer(peer));
+    this.peers.add(peer);
+    // Newest peer wins primary (Electron reconnect takes over from a dead
+    // stdio link).
+    this.primary = peer;
+    this.lifecycle.onClientAttached();
+    return peer;
+  }
+
+  private detachPeer(peer: JsonRpcPeer): void {
+    this.peers.delete(peer);
+    if (this.primary === peer) {
+      const next = [...this.peers].pop();
+      if (next) {
+        this.primary = next;
+        this.lifecycle.onClientAttached();
+      } else {
+        this.primary = undefined;
+        this.lifecycle.onClientDetached();
+      }
+    }
   }
 
   async stop(): Promise<void> {
+    this.lifecycle.dispose();
     this.normalizer.dispose();
     await this.connections.disconnectAll();
     for (const [, t] of this.terminals) t.dispose();
     this.terminals.clear();
+    this.session?.remove();
+    await new Promise<void>((resolve) => {
+      if (!this.server) return resolve();
+      this.server.close(() => resolve());
+    });
+    // Unlink the socket so a stale path never blocks the next host.
+    if (this.socketPath && process.platform !== "win32") {
+      try {
+        fs.rmSync(this.socketPath);
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   private async adapter(runtimeId: string, backendId: string) {
@@ -118,11 +238,35 @@ export class AetherHost {
     return provider;
   }
 
+  /** Shared by the RPC handler and orphan-mode approval timeouts. */
+  private async respondApprovalInternal(
+    approvalId: string,
+    decision: "approved_once" | "approved_session" | "rejected" | "cancelled",
+  ): Promise<void> {
+    const req = this.pendingApprovals.get(approvalId);
+    if (!req) throw new Error(`no pending approval: ${approvalId}`);
+    const adapter = await this.adapter(req.runtimeId, req.backendId);
+    await adapter.respondApproval({ approvalId, decision, raw: req });
+    // Adapters also emit approval.resolved; clearing here is idempotent
+    // and covers runtimes that do not emit the event.
+    this.pendingApprovals.delete(approvalId);
+    this.lifecycle.onApprovalResolved(approvalId);
+  }
+
   private async handleRequest(method: string, params: unknown): Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     switch (method) {
       case HOST_METHODS.ping:
         return { ok: true, pid: process.pid, time: new Date().toISOString() };
+
+      case HOST_METHODS.hostStatus:
+        return {
+          activeRuns: this.runTracker.activeCount(),
+          orphan: this.lifecycle.isOrphan,
+          socketPath: this.socketPath,
+          startedAt: this.startedAt,
+          pid: process.pid,
+        };
 
       case HOST_METHODS.listRuntimes:
         return {
@@ -224,17 +368,10 @@ export class AetherHost {
       }
 
       case HOST_METHODS.respondApproval: {
-        const req = this.pendingApprovals.get(String(p.approvalId));
-        if (!req) throw new Error(`no pending approval: ${p.approvalId}`);
-        const adapter = await this.adapter(req.runtimeId, req.backendId);
-        await adapter.respondApproval({
-          approvalId: req.approvalId,
-          decision: p.decision as "approved_once" | "approved_session" | "rejected" | "cancelled",
-          raw: req,
-        });
-        // Adapters also emit approval.resolved; clearing here is idempotent
-        // and covers runtimes that do not emit the event.
-        this.pendingApprovals.delete(req.approvalId);
+        await this.respondApprovalInternal(
+          String(p.approvalId),
+          p.decision as "approved_once" | "approved_session" | "rejected" | "cancelled",
+        );
         return { ok: true };
       }
 
@@ -266,11 +403,11 @@ export class AetherHost {
         const session = await this.terminalProvider.create(cwd ?? p.cwd ? String(p.cwd ?? cwd) : undefined);
         this.terminals.set(session.id, session);
         session.onOutput((data) => {
-          this.peer?.notify("terminalOutput", { terminalId: session.id, data });
+          this.primary?.notify("terminalOutput", { terminalId: session.id, data });
         });
         session.onExit((exitCode) => {
           this.terminals.delete(session.id);
-          this.peer?.notify("terminalExit", { terminalId: session.id, exitCode });
+          this.primary?.notify("terminalExit", { terminalId: session.id, exitCode });
         });
         return { terminalId: session.id };
       }
